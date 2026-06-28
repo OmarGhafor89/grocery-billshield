@@ -1,0 +1,312 @@
+{
+  "name": "Invoice Verification and Line Item Analysis",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "grocery",
+        "responseMode": "lastNode",
+        "responseData": "allEntries",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "b67247d9-f429-462e-b64a-0db7a72bc85b",
+      "name": "Webhook",
+      "webhookId": "41e5c2e9-9c6c-494a-bdbd-d8e54fca0a09"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer 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"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"meta-llama/llama-4-scout-17b-16e-instruct\",\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": [\n        {\n          \"type\": \"text\",\n          \"text\": \"You are a grocery receipt reader for Bahrain bills. Read EVERY page of the receipt image(s) and return ONLY valid JSON (no markdown, no extra words) in EXACTLY this shape: {\\\"store_name\\\": string|null, \\\"bill_date\\\": \\\"YYYY-MM-DD\\\"|null, \\\"line_items\\\": [{\\\"item_name\\\": string, \\\"category\\\": string, \\\"quantity\\\": number, \\\"unit_price\\\": number, \\\"discount\\\": number, \\\"line_total\\\": number, \\\"vat_rate\\\": number, \\\"vat_amount\\\": number, \\\"is_essential\\\": boolean}], \\\"subtotal\\\": number|null, \\\"vat_total\\\": number|null, \\\"grand_total\\\": number|null}. RULES: (1) item_name = the English product description. (2) quantity = the Qty column (use 1 if missing). (3) unit_price = the Price column. (4) discount = the Disc. column (use 0 if none). (5) line_total = the value in the RIGHTMOST 'Total' column for that line. This is the amount actually paid (after discount, including VAT) and is the LARGEST money value on the line. NEVER take line_total from the 'Net' or 'Vat' columns. (6) vat_rate = READ the printed VAT % column for that line (0 or 10). Do NOT guess it. (7) vat_amount = the printed Vat amount for that line. (8) is_essential = true only when vat_rate is 0. (9) category MUST be one of: Fruits & Vegetables, Dairy, Bakery, Meat & Seafood, Grains & Pulses, Pantry & Cooking, Snacks, Beverages, Household, Personal Care, Other. (10) Skip non-product lines like totals, change, loyalty points and card details. (11) All money values are numbers only.\"\n        },\n        {\n          \"type\": \"image_url\",\n          \"image_url\": { \"url\": \"data:{{ $json.body.mime_type }};base64,{{ $json.body.image_base64 }}\" }\n        }\n      ]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        208,
+        0
+      ],
+      "id": "6accd637-9082-4a47-bc26-35e7a3ffc32c",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "tableId": "bills",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "user_name",
+              "fieldValue": "={{ $json.user_name }}"
+            },
+            {
+              "fieldId": "store_name",
+              "fieldValue": "={{ $json.store_name }}"
+            },
+            {
+              "fieldId": "bill_date",
+              "fieldValue": "={{ $json.bill_date }}"
+            },
+            {
+              "fieldId": "bill_month",
+              "fieldValue": "={{ $json.bill_month }}"
+            },
+            {
+              "fieldId": "subtotal",
+              "fieldValue": "={{ $json.subtotal }}"
+            },
+            {
+              "fieldId": "vat_total",
+              "fieldValue": "={{ $json.vat_total }}"
+            },
+            {
+              "fieldId": "grand_total",
+              "fieldValue": "={{ $json.grand_total }}"
+            },
+            {
+              "fieldId": "essentials_total",
+              "fieldValue": "={{ $json.essentials_total }}"
+            },
+            {
+              "fieldId": "taxed_total",
+              "fieldValue": "={{ $json.taxed_total }}"
+            },
+            {
+              "fieldId": "needs_review",
+              "fieldValue": "={{ $json.needs_review }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        624,
+        0
+      ],
+      "id": "b4003328-0665-4f01-bc25-45e8444c135d",
+      "name": "Create a row [Insert Bill]",
+      "credentials": {
+        "supabaseApi": {
+          "id": "FsHy1C2oy0IHhxgJ",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const billId = $input.first().json.id;       // the new bill's id\nconst parsed = $('Parse').first().json;       // the items from earlier\n\nreturn parsed.line_items.map(it => ({\n  json: {\n    bill_id: billId,\n    item_name: it.item_name || null,\n    category: it.category || 'Other',\n    quantity: it.quantity ?? 1,\n    unit_price: it.unit_price ?? null,\n    discount: it.discount ?? 0,\n    line_total: it.line_total ?? null,\n    vat_rate: it.vat_rate ?? null,\n    vat_amount: it.vat_amount ?? null,\n    is_essential: Number(it.vat_rate) === 0\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        832,
+        0
+      ],
+      "id": "c05c2e3f-c839-42f4-b246-705702af45a7",
+      "name": "Code in JavaScript - Expand items"
+    },
+    {
+      "parameters": {
+        "jsCode": "const groq = $input.first().json;\nconst data = JSON.parse(groq.choices[0].message.content);\n\nconst items = data.line_items || [];\nconst byCategory = {};\nlet essentials = 0, taxed = 0, itemsSum = 0;\n\nfor (const it of items) {\n  const cat = it.category || 'Other';\n  const total = Number(it.line_total || 0);\n  itemsSum += total;\n  byCategory[cat] = (byCategory[cat] || 0) + total;\n  if (Number(it.vat_rate) === 0) essentials += total;  // 0% VAT = staple\n  else taxed += total;                                  // 10% VAT\n}\n\n// Safety net: do the item totals match the printed grand total?\nconst grand = Number(data.grand_total || itemsSum);\nconst needsReview = Math.abs(itemsSum - grand) > 0.05;\n\nconst billDate = data.bill_date || new Date().toISOString().slice(0, 10);\n\nreturn [{\n  json: {\n    user_name: $('Webhook').first().json.body.user_name,\n    store_name: data.store_name || null,\n    bill_date: data.bill_date || null,\n    bill_month: billDate.slice(0, 7),\n    subtotal: data.subtotal ?? null,\n    vat_total: data.vat_total ?? null,\n    grand_total: data.grand_total ?? null,\n    essentials_total: Number(essentials.toFixed(3)),\n    taxed_total: Number(taxed.toFixed(3)),\n    needs_review: needsReview,\n    category_subtotals: byCategory,  // for the UI\n    line_items: items                // for the next save step\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        416,
+        0
+      ],
+      "id": "07a9d566-562b-43b3-8bda-80e4a0ceba75",
+      "name": "Parse"
+    },
+    {
+      "parameters": {
+        "tableId": "line_items",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "bill_id",
+              "fieldValue": "={{ $json.bill_id }}"
+            },
+            {
+              "fieldId": "item_name",
+              "fieldValue": "={{ $json.item_name }}"
+            },
+            {
+              "fieldId": "category",
+              "fieldValue": "={{ $json.category }}"
+            },
+            {
+              "fieldId": "quantity",
+              "fieldValue": "={{ $json.quantity }}"
+            },
+            {
+              "fieldId": "unit_price",
+              "fieldValue": "={{ $json.unit_price }}"
+            },
+            {
+              "fieldId": "discount",
+              "fieldValue": "={{ $json.discount }}"
+            },
+            {
+              "fieldId": "line_total",
+              "fieldValue": "={{ $json.line_total }}"
+            },
+            {
+              "fieldId": "vat_rate",
+              "fieldValue": "={{ $json.vat_rate }}"
+            },
+            {
+              "fieldId": "vat_amount",
+              "fieldValue": "={{ $json.vat_amount }}"
+            },
+            {
+              "fieldId": "is_essential",
+              "fieldValue": "={{ $json.is_essential }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        0
+      ],
+      "id": "bece684e-34d7-4fef-88c2-1f9eb614e59a",
+      "name": "Insert Line Items",
+      "credentials": {
+        "supabaseApi": {
+          "id": "FsHy1C2oy0IHhxgJ",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $('Parse').first().json }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1264,
+        0
+      ],
+      "id": "e8a10185-bac0-42ba-8012-8ecdd48bbad0",
+      "name": "Respond"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Parse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create a row [Insert Bill]": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript - Expand items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse": {
+      "main": [
+        [
+          {
+            "node": "Create a row [Insert Bill]",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript - Expand items": {
+      "main": [
+        [
+          {
+            "node": "Insert Line Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Line Items": {
+      "main": [
+        []
+      ]
+    },
+    "Respond": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "a4eaee17-2c29-48dc-9d32-a9514f0d3d83",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "39b5866e38024fe6851118e8667a8ad34f6f05458068e48e12bb1c44385d6d7d"
+  },
+  "nodeGroups": [],
+  "id": "La1WstsZ4mhWuzFR",
+  "tags": [
+    {
+      "updatedAt": "2026-06-27T18:48:53.321Z",
+      "createdAt": "2026-06-27T18:48:53.321Z",
+      "id": "Xxb62S5T9HUwnEdg",
+      "name": "Hackaton - Bill Shield"
+    }
+  ]
+}
